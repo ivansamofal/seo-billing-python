@@ -1,14 +1,16 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 from sqlalchemy.orm import Session
 
 from src.config.settings import settings
 from src.domain.pricing.tariff_pricing_strategy import TariffPricingStrategy, PricingContext
 from src.models.history import HistoryEntry
+from src.models.orm import UserOrm
 from src.models.user import UserWithProjects
+from src.repositories.history_repository import HistoryRepository
 from src.repositories.user_repository import UserRepository
 from src.services.external_api_service import ExternalApiService
 
@@ -30,30 +32,28 @@ class BillingService:
         pricing: TariffPricingStrategy,
     ):
         self._session = session
-        self._repo = UserRepository(session)
+        self._user_repo = UserRepository(session)
+        self._history_repo = HistoryRepository(session)
         self._external_api = external_api
         self._pricing = pricing
 
     def process_write_off(self, date: Optional[str] = None) -> BillingResult:
-        """
-        Main entry point: find eligible users, calculate charges, apply batch deduction.
-        """
         billing_date = date or datetime.now().strftime("%Y-%m-%d")
         billing_dt = datetime.strptime(billing_date, "%Y-%m-%d")
         logger.info("Starting billing write-off for date: %s", billing_date)
 
-        users = self._repo.find_eligible_users_for_write_off()
-        logger.info("Eligible users found: %d", len(users))
+        rows: List[Tuple[UserOrm, int]] = self._user_repo.find_eligible_users_for_write_off()
+        logger.info("Eligible users found: %d", len(rows))
 
-        if not users:
+        if not rows:
             return BillingResult(processed_users=0, total_amount=0, date=billing_date)
 
-        # Batch-fetch external data for all users at once
+        users = self._map_to_domain(rows)
+
         emails = [u.login for u in users]
         users_data = self._external_api.get_users_info(emails)
         logger.info("External API returned data for %d users", len(users_data))
 
-        # Filter out users with active discount promocodes
         users = self._filter_users_by_promo_codes(users)
         logger.info("Users after promo filter: %d", len(users))
 
@@ -67,16 +67,13 @@ class BillingService:
                     logger.debug("User %d (%s): amount=0, skipping", user.id, user.login)
                     continue
 
-                # Cap to available balance (never go below 0)
                 actual_amount = min(amount, int(round(user.balance)))
                 if actual_amount <= 0:
                     continue
 
-                unique_phrases = self._repo.get_unique_phrases_count(user.id)
-                hint = (
-                    f"{user.id} / {unique_phrases} / "
-                    f"{user.project_count} / {self._get_account_count(user, users_data)}"
-                )
+                unique_phrases = self._user_repo.get_unique_phrases_count(user.id)
+                account_count = self._get_account_count(user, users_data)
+                hint = f"{user.id} / {unique_phrases} / {user.project_count} / {account_count}"
 
                 balance_updates.append({"user_id": user.id, "amount": actual_amount})
                 history_entries.append(HistoryEntry(
@@ -92,7 +89,6 @@ class BillingService:
                 )
             except Exception as exc:
                 logger.error("Error processing user %d (%s): %s", user.id, user.login, exc, exc_info=True)
-                continue
 
         total_amount = sum(u["amount"] for u in balance_updates)
         logger.info(
@@ -102,13 +98,13 @@ class BillingService:
 
         if balance_updates:
             try:
-                self._repo.batch_update_user_balances(balance_updates)
-                self._repo.batch_insert_history(history_entries)
+                self._user_repo.batch_update_user_balances(balance_updates)
+                self._history_repo.batch_insert(history_entries)
                 self._session.commit()
                 logger.info("Batch billing transaction committed successfully")
             except Exception as exc:
                 self._session.rollback()
-                logger.error("Batch billing transaction failed, rolled back: %s", exc, exc_info=True)
+                logger.error("Billing transaction rolled back: %s", exc, exc_info=True)
                 raise
 
         return BillingResult(
@@ -118,7 +114,29 @@ class BillingService:
         )
 
     # ------------------------------------------------------------------
-    # Private methods
+    # Mapping
+    # ------------------------------------------------------------------
+
+    def _map_to_domain(self, rows: List[Tuple[UserOrm, int]]) -> List[UserWithProjects]:
+        return [
+            UserWithProjects(
+                id=orm_user.id,
+                login=orm_user.login,
+                balance=float(orm_user.balance or 0),
+                confirmed=orm_user.confirmed or 0,
+                regDate=orm_user.regDate,
+                unic_queries=orm_user.unic_queries or 0,
+                salesMonth=orm_user.salesMonth or 0,
+                tariffStatus=orm_user.tariffStatus or 0,
+                wbKey=orm_user.wbKey,
+                pass2=orm_user.pass2,
+                project_count=project_count or 0,
+            )
+            for orm_user, project_count in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Business logic helpers
     # ------------------------------------------------------------------
 
     def _calculate_charge(
@@ -138,7 +156,7 @@ class BillingService:
         support_tariff = bool(external.get("supportTariff", False))
         bidder_token_exists = bool(external.get("tokenExists", False))
 
-        unique_phrases = self._repo.get_unique_phrases_count(user.id)
+        unique_phrases = self._user_repo.get_unique_phrases_count(user.id)
 
         ctx = PricingContext(
             user_id=user.id,
@@ -171,18 +189,16 @@ class BillingService:
         token_exists = bool(external.get("tokenExists", False))
 
         bonus_days = settings.FREE_DAYS_API_ENTERED if token_exists else settings.FREE_DAYS
-        cutoff = user.regDate + timedelta(days=bonus_days)
-        return billing_dt < cutoff
+        return billing_dt < user.regDate + timedelta(days=bonus_days)
 
     def _filter_users_by_promo_codes(
         self, users: List[UserWithProjects]
     ) -> List[UserWithProjects]:
-        """Remove users who have an active discount promocode (skip billing for them)."""
         result = []
         for user in users:
             try:
-                if self._repo.has_active_promocode(user.id):
-                    logger.debug("User %d has active promocode, skipping billing", user.id)
+                if self._user_repo.has_active_promocode(user.id):
+                    logger.debug("User %d has active promocode, skipping", user.id)
                     continue
                 result.append(user)
             except Exception as exc:
@@ -191,6 +207,4 @@ class BillingService:
         return result
 
     def _get_account_count(self, user: UserWithProjects, users_data: Dict[str, dict]) -> int:
-        external = users_data.get(user.login, {})
-        accounts = external.get("accounts", []) or []
-        return len(accounts)
+        return len(users_data.get(user.login, {}).get("accounts", []) or [])
