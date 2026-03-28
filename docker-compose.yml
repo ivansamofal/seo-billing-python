@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  seo-billing-python:
+    build: .
+    container_name: seo-billing-python
+    env_file: .env
+    command: ["python", "-m", "src.main", "update-balance"]
+    networks:
+      - billing-network
+
+networks:
+  billing-network:
+    driver: bridge
