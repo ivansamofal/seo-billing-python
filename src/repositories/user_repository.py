@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Set
 
 from sqlalchemy import func, distinct, text, or_
 from sqlalchemy.orm import Session
@@ -27,29 +27,42 @@ class UserRepository:
             .all()
         )
 
-    def get_unique_phrases_count(self, user_id: int) -> int:
-        return (
-            self._session.query(func.count(distinct(ProjectListPhraseOrm.idPhrase)))
-            .join(ProjectOrm, ProjectListPhraseOrm.idProject == ProjectOrm.id)
+    def get_unique_phrases_counts_batch(self, user_ids: List[int]) -> Dict[int, int]:
+        if not user_ids:
+            return {}
+        rows = (
+            self._session.query(
+                ProjectOrm.user_id,
+                func.count(distinct(ProjectListPhraseOrm.idPhrase)).label("cnt"),
+            )
+            .join(ProjectListPhraseOrm, ProjectListPhraseOrm.idProject == ProjectOrm.id)
             .filter(
-                ProjectOrm.user_id == user_id,
+                ProjectOrm.user_id.in_(user_ids),
                 ProjectListPhraseOrm.tech == 0,
             )
-            .scalar()
-            or 0
+            .group_by(ProjectOrm.user_id)
+            .all()
         )
+        result = {uid: 0 for uid in user_ids}
+        for user_id, cnt in rows:
+            result[user_id] = cnt
+        return result
 
-    def has_active_promocode(self, user_id: int) -> bool:
-        return (
-            self._session.query(UserPromocodeOrm)
+    def get_users_with_active_promocode(self, user_ids: List[int]) -> Set[int]:
+        if not user_ids:
+            return set()
+        rows = (
+            self._session.query(UserPromocodeOrm.user_id)
             .join(PromocodeOrm, UserPromocodeOrm.promocode_id == PromocodeOrm.id)
             .filter(
-                UserPromocodeOrm.user_id == user_id,
+                UserPromocodeOrm.user_id.in_(user_ids),
                 PromocodeOrm.active == 1,
                 text("DATE_ADD(promocodes.dt, INTERVAL promocode.value DAY) >= CURDATE()"),
             )
-            .first()
-        ) is not None
+            .distinct()
+            .all()
+        )
+        return {row.user_id for row in rows}
 
     def batch_update_user_balances(self, updates: List[dict]) -> None:
         if not updates:

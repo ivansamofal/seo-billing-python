@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -50,19 +50,28 @@ class BillingService:
 
         users = self._map_to_domain(rows)
 
-        emails = [u.login for u in users]
-        users_data = self._external_api.get_users_info(emails)
+        users_data = self._external_api.get_users_info([u.login for u in users])
         logger.info("External API returned data for %d users", len(users_data))
 
-        users = self._filter_users_by_promo_codes(users)
+        # Each filter reduces the working set before the next (more expensive) step
+        users = self._exclude_bonus_period_users(users, users_data, billing_dt)
+        logger.info("Users after bonus period filter: %d", len(users))
+
+        user_ids = [u.id for u in users]
+        promo_user_ids = self._user_repo.get_users_with_active_promocode(user_ids)
+        users = self._exclude_promo_users(users, promo_user_ids)
         logger.info("Users after promo filter: %d", len(users))
+
+        billable_ids = [u.id for u in users]
+        phrase_counts = self._user_repo.get_unique_phrases_counts_batch(billable_ids)
 
         balance_updates: List[dict] = []
         history_entries: List[HistoryEntry] = []
 
         for user in users:
             try:
-                amount = self._calculate_charge(user, users_data, billing_dt)
+                unique_phrases = phrase_counts.get(user.id, 0)
+                amount = self._calculate_charge(user, users_data, unique_phrases)
                 if amount <= 0:
                     logger.debug("User %d (%s): amount=0, skipping", user.id, user.login)
                     continue
@@ -71,7 +80,6 @@ class BillingService:
                 if actual_amount <= 0:
                     continue
 
-                unique_phrases = self._user_repo.get_unique_phrases_count(user.id)
                 account_count = self._get_account_count(user, users_data)
                 hint = f"{user.id} / {unique_phrases} / {user.project_count} / {account_count}"
 
@@ -143,20 +151,11 @@ class BillingService:
         self,
         user: UserWithProjects,
         users_data: Dict[str, dict],
-        billing_dt: datetime,
+        unique_phrases: int,
     ) -> int:
-        if self._is_in_bonus_period(user, users_data, billing_dt):
-            logger.debug("User %d is in bonus period, skipping", user.id)
-            return 0
-
         external = users_data.get(user.login, {})
         accounts = external.get("accounts", []) or []
         sales_accounts = external.get("salesAccounts", []) or []
-        weekly_sales_sum = float(external.get("weeklySalesSum", 0) or 0)
-        support_tariff = bool(external.get("supportTariff", False))
-        bidder_token_exists = bool(external.get("tokenExists", False))
-
-        unique_phrases = self._user_repo.get_unique_phrases_count(user.id)
 
         ctx = PricingContext(
             user_id=user.id,
@@ -164,45 +163,42 @@ class BillingService:
             project_count=user.project_count,
             account_count=len(accounts),
             sales_account_count=len(sales_accounts),
-            weekly_sales_sum=weekly_sales_sum,
+            weekly_sales_sum=float(external.get("weeklySalesSum", 0) or 0),
             sales_month=user.salesMonth or 0,
-            support_tariff=support_tariff,
-            bidder_token_exists=bidder_token_exists,
+            support_tariff=bool(external.get("supportTariff", False)),
+            bidder_token_exists=bool(external.get("tokenExists", False)),
         )
 
         return self._pricing.calculate_price(ctx)
 
-    def _is_in_bonus_period(
+    def _exclude_bonus_period_users(
         self,
-        user: UserWithProjects,
+        users: List[UserWithProjects],
         users_data: Dict[str, dict],
         billing_dt: datetime,
-    ) -> bool:
-        """
-        - FREE_DAYS (3) days free after registration for all users
-        - FREE_DAYS_API_ENTERED (7) days free if bidder token is valid
-        """
-        if not user.regDate:
-            return False
-
-        external = users_data.get(user.login, {})
-        token_exists = bool(external.get("tokenExists", False))
-
-        bonus_days = settings.FREE_DAYS_API_ENTERED if token_exists else settings.FREE_DAYS
-        return billing_dt < user.regDate + timedelta(days=bonus_days)
-
-    def _filter_users_by_promo_codes(
-        self, users: List[UserWithProjects]
     ) -> List[UserWithProjects]:
         result = []
         for user in users:
-            try:
-                if self._user_repo.has_active_promocode(user.id):
-                    logger.debug("User %d has active promocode, skipping", user.id)
-                    continue
+            if not user.regDate:
                 result.append(user)
-            except Exception as exc:
-                logger.warning("Error checking promo for user %d: %s", user.id, exc)
+                continue
+            external = users_data.get(user.login, {})
+            token_exists = bool(external.get("tokenExists", False))
+            bonus_days = settings.FREE_DAYS_API_ENTERED if token_exists else settings.FREE_DAYS
+            if billing_dt < user.regDate + timedelta(days=bonus_days):
+                logger.debug("User %d is in bonus period, skipping", user.id)
+            else:
+                result.append(user)
+        return result
+
+    def _exclude_promo_users(
+        self, users: List[UserWithProjects], promo_user_ids: Set[int]
+    ) -> List[UserWithProjects]:
+        result = []
+        for user in users:
+            if user.id in promo_user_ids:
+                logger.debug("User %d has active promocode, skipping", user.id)
+            else:
                 result.append(user)
         return result
 
