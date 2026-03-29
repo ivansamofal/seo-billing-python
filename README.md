@@ -179,6 +179,44 @@ src/
 
 ---
 
+## Testing
+
+Tests use `pytest` with `unittest.mock` — no real database or HTTP calls are made.
+
+**Install dependencies and run:**
+
+```bash
+pip install -r requirements.txt
+pytest tests/
+```
+
+**Verbose output:**
+
+```bash
+pytest tests/ -v
+```
+
+**Run a specific file or test:**
+
+```bash
+pytest tests/test_pricing.py -v
+pytest tests/test_billing_service.py::TestBonusPeriodFilter -v
+```
+
+**Test coverage by module:**
+
+| File | What is tested |
+|---|---|
+| `test_pricing.py` | All tariff tiers, surcharge calculations, FREE/HELP/PAID classification |
+| `test_user_repository.py` | ORM query results, batch SQL statements, empty-input guards |
+| `test_history_repository.py` | Bulk insert, negative amount storage, empty-input guard |
+| `test_external_api.py` | HTTP success/error paths, auth header, empty-email short-circuit |
+| `test_billing_service.py` | Bonus period filter, promo filter, charge capping, commit/rollback, filter order |
+
+No `.env` is required to run tests — environment variables are set automatically inside `tests/conftest.py`.
+
+---
+
 ## External API
 
 BM Common API is called once per billing run with all user emails:
