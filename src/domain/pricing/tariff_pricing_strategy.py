@@ -49,7 +49,6 @@ class PricingContext:
 
 class TariffPricingStrategy:
     def calculate_price(self, ctx: PricingContext) -> int:
-        """Return daily charge in rubles (integer)."""
         tariff = self.get_tariff_name(ctx)
         logger.debug(
             "User %d: tariff=%s phrases=%d accounts=%d projects=%d",
