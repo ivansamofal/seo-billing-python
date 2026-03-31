@@ -5,7 +5,6 @@ from typing import Optional
 
 @dataclass
 class UserWithProjects:
-    """Domain model: user fields relevant to billing, plus aggregated project count."""
     id: int
     login: str
     balance: float
