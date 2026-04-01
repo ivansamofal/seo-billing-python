@@ -17,11 +17,6 @@ class ExternalApiService:
         self._auth = (self._token, "")  # Basic auth: token as username, empty password
 
     def get_users_info(self, emails: List[str]) -> Dict[str, dict]:
-        """
-        POST /auth/auth/seo/infos
-        Returns a dict keyed by email with account/tariff/sales data.
-        Falls back to {} on any error.
-        """
         if not emails:
             return {}
 
