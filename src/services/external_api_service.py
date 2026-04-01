@@ -11,10 +11,6 @@ TIMEOUT_SECONDS = 10
 
 
 class ExternalApiService:
-    """
-    Client for BM Common API — fetches per-user account/tariff data.
-    """
-
     def __init__(self):
         self._base_url = settings.BM_COMMON_API_URL.rstrip("/")
         self._token = settings.BM_COMMON_API_TOKEN
