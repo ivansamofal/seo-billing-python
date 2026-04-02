@@ -39,10 +39,6 @@ class ExternalApiService:
             return {}
 
     def check_token_exists(self, email: str) -> bool:
-        """
-        POST /user/users/seo_token_exists
-        Returns True if the user has a valid bidder API token.
-        """
         url = f"{self._base_url}/user/users/seo_token_exists"
         try:
             response = httpx.post(
