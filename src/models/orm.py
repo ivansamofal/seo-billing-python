@@ -1,8 +1,3 @@
-"""
-SQLAlchemy ORM-mapped classes — one per database table.
-These are the only place that knows about column names and types.
-"""
-
 from datetime import datetime
 from typing import Optional
 
