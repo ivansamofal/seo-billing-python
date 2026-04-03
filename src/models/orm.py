@@ -68,7 +68,6 @@ class ProjectListPhraseOrm(Base):
 
 
 class PromocodeOrm(Base):
-    """Master promocode definitions (table: promocode)."""
     __tablename__ = "promocode"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
