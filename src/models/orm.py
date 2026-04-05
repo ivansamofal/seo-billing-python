@@ -84,7 +84,6 @@ class PromocodeOrm(Base):
 
 
 class UserPromocodeOrm(Base):
-    """Per-user promocode assignments (table: promocodes)."""
     __tablename__ = "promocodes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
