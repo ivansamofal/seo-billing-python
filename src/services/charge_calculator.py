@@ -16,7 +16,6 @@ class ChargeEntry:
 
 
 class ChargeCalculator:
-    """Calculates the billable charge for a single user."""
 
     def __init__(self, pricing: TariffPricingStrategy):
         self._pricing = pricing
