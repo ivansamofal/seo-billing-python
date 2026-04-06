@@ -46,7 +46,6 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 )
 @click.pass_context
 def update_balance(ctx: click.Context, date: Optional[str]) -> None:
-    """Charge eligible users their daily subscription fee."""
     logger = logging.getLogger(__name__)
 
     session = SessionLocal()
