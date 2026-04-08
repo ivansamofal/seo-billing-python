@@ -139,7 +139,6 @@ class TestPromoFilter:
         assert result.processed_users == 0
 
     def test_phrase_counts_not_loaded_for_promo_users(self, mock_session, patched_repos):
-        """Phrase count batch query should exclude promo users."""
         user_repo, history_repo = patched_repos
         user_orm = make_user_orm(id=5, login="promo@test.com", balance=500.0)
         user_repo.find_eligible_users_for_write_off.return_value = [(user_orm, 1)]
