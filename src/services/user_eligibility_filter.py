@@ -9,8 +9,6 @@ logger = logging.getLogger(__name__)
 
 
 class UserEligibilityFilter:
-    """Filters users that should be excluded from a billing run."""
-
     def filter_bonus_period(
         self,
         users: List[UserWithProjects],
