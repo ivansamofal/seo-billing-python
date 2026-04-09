@@ -306,7 +306,6 @@ class TestBatchWriteAndCommit:
 
 class TestFilterOrderAndBatchScope:
     def test_phrase_counts_only_loaded_for_billable_users(self, mock_session, patched_repos):
-        """Promo users must be excluded before phrase count query runs."""
         user_repo, history_repo = patched_repos
         user1 = make_user_orm(id=1, login="a@test.com", balance=500.0)
         user2 = make_user_orm(id=2, login="b@test.com", balance=500.0)  # has promo
