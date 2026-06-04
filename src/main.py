@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 SEO Billing CLI
-
 Usage:
     python -m src.main update-balance [--date YYYY-MM-DD]
 """
